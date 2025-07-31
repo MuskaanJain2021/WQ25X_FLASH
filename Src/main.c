@@ -343,6 +343,41 @@ void EraseSector4KB(uint32_t start_Addr)
 	// Ensures that the flash remains in a protected state until you explicitly enable writing for a new operation.
 	// Even if the device automatically clears WEL, explicitly issuing a Write Disable command can serve as an extra safeguard in your firmware design.
 }
+
+
+void EraseSector64KB(uint32_t start_Addr)
+{
+	W25Qxx_EnableFlash();  // Set WEL bit
+	W25Qxx_CS_LOW();
+	SPI1_MASTER_TRANSFER_BYTE(Sector_Erase64KB);  // 0xD8
+	SPI1_MASTER_TRANSFER_BYTE((start_Addr >> 16) & 0xFF);
+	SPI1_MASTER_TRANSFER_BYTE((start_Addr >> 8) & 0xFF);
+	SPI1_MASTER_TRANSFER_BYTE(start_Addr & 0xFF);
+	W25Qxx_CS_HIGH();
+
+	if (!TIMEOUT_LOOP(W25Qxx_CheckStatusBit(ReadSR1, SR_BUSY_MASK), 200000))
+	{
+		HANDLE_SPI_TIMEOUT("BUSY after 64KB sector erase");
+	}
+
+	W25Qxx_WriteDisable();  // Protect against unintended writes
+}
+
+void EraseChip()
+{
+	W25Qxx_EnableFlash();  // Set WEL bit
+	W25Qxx_CS_LOW();
+	SPI1_MASTER_TRANSFER_BYTE(Chip_Erase);  // 0xC7 or 0x60
+	W25Qxx_CS_HIGH();
+
+	if (!TIMEOUT_LOOP(W25Qxx_CheckStatusBit(ReadSR1, SR_BUSY_MASK), 3000000))
+	{
+		HANDLE_SPI_TIMEOUT("BUSY after chip erase");
+	}
+
+	W25Qxx_WriteDisable();
+}
+
 void W25Qxx_WritePage(uint32_t pageIndex, const uint8_t *data)
 {
     uint32_t addr = pageIndex * FLASH_PAGE_SIZE;
