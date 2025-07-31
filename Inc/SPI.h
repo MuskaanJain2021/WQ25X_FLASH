@@ -222,8 +222,9 @@ void SPI_Init(SPI_Handle_t *pSPIHandle);
 void SPI_DeInit(SPI_Handle_t *config);
 //void SPI_SEND_DATA_POLLING(SPI_Handle_t *SPIHandle, uint8_t *TX_BUFFER,uint32_t LENGTH) ;
 //void SPI_RECIEVE_DATA_POLLING (SPI_Handle_t *SPIHandle, uint16_t *RX_BUFFER, uint32_t LENGTH);
-uint16_t SPI_Master_TRX_Byte(SPI_Config_t *config, uint16_t tx_data);
-int8_t SPI_TRX_Buffer(SPI_Config_t *config, uint16_t *tx_buffer, uint16_t *rx_buffer, uint16_t tx_length, uint16_t rx_length);
+uint16_t SPI_Master_TRX_Byte(SPI_Handle_t *config, uint16_t tx_data);
+
+int8_t SPI_TRX_Buffer(SPI_Handle_t *config, uint16_t *TXBUFFER, uint16_t *RXBUFFER, uint16_t tx_length, uint16_t rx_length);
 void SPI_SendByte(SPI_TypeDef *SPIx, uint8_t data);
 void  SPI_Master_Recieve_Byte();
 void SPI_SSOE_Config(SPI_TypeDef *pSPIx, uint8_t SSOE_Status);
