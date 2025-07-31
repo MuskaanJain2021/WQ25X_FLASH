@@ -223,7 +223,7 @@ uint32_t W25Qxx_READID(void)
 }
 void W25Qxx_READ_DATA(uint32_t START_PAGE, uint8_t Offset, uint32_t NO_OF_BYTES_TO_BE_READ, uint8_t *DATA_BUFFER)
 {
-	uint8_t retVal = 0, Retrys = 0xff;
+
 	if (DATA_BUFFER == NULL)
 		return; // invalid buffer pointer
 
@@ -359,7 +359,7 @@ void W25Qxx_WritePage(uint32_t pageIndex, const uint8_t *data)
     SPI1_MASTER_TRANSFER_BYTE((addr >> 8) & 0xFF);
     SPI1_MASTER_TRANSFER_BYTE(addr & 0xFF);
 
-    SPI1_MASTER_TRANSFER_BUFFER((uint8_t *)data, FLASH_PAGE_SIZE);
+    SPI1_MASTER_TRANSFER_BUFFER((uint8_t *)data, (uint8_t)FLASH_PAGE_SIZE);
     W25Qxx_CS_HIGH();
 
     // Wait for BUSY to clear with timeout
@@ -436,7 +436,7 @@ void W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data, uint32_t length)
 
 int main()
 {
-	delay_init(16000000);
+	//delay_init(16000000);
 	W25Qxx_CS_Pin_Init();
 	W25Qxx_CS_HIGH();
 	// delay1(1);
@@ -445,7 +445,7 @@ int main()
 	// delay(1);
 
 	W25Qxx_Reset();
-	delay(10);
+	delay1(10);
 	// delay1(1);
 	// delay(1);
 	/*Power release*/
@@ -490,16 +490,21 @@ int main()
 
 	EraseSector4KB(read_addr1); // Erase sector
 
-	// To read 128 bytes from the 9th page:
-	uint8_t pageData[128];
-	W25Qxx_READ_MEMORY(READ_TYPE_PAGE, 9, 0, 128, pageData);
+	// To read 10 bytes from the 9th page:
+	uint8_t pageData[10] = {11,12,13,14,15,16,17,18,19,20};
+	W25Qxx_WritePage(8, pageData);
+	W25Qxx_READ_MEMORY(READ_TYPE_PAGE, 9, 0,10, pageData);
 
-	// To read the entire 3rd sector (sector index = 2):
-	uint8_t sectorData[SECTOR_SIZE];
+	EraseSector4KB(read_addr2); // Erase sector
+	// To read the entire 3rd sector (sector index = 2)-0x030000 to 0x03FFFF:
+	uint8_t sectorData[SECTOR_SIZE]={0};
+	W25Qxx_BulkWrite(read_addr2, sectorData,sizeof(sectorData));
 	W25Qxx_READ_MEMORY(READ_TYPE_SECTOR, 2, 0, SECTOR_SIZE, sectorData);
 
-	// To read the entire 2nd block (block index = 1):
+	EraseSector4KB(read_addr3); // Erase sector
+	// To read the entire 2nd block (block index = 1)-0x010000 to 01FFFF:
 	uint8_t blockData[BLOCK_SIZE];
+	W25Qxx_BulkWrite(read_addr3, sectorData,sizeof(sectorData));
 	W25Qxx_READ_MEMORY(READ_TYPE_BLOCK, 1, 0, BLOCK_SIZE, blockData);
 
 	while (1)
