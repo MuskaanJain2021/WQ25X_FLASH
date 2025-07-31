@@ -493,7 +493,7 @@ int main()
 	// To read 10 bytes from the 9th page:
 	uint8_t pageData[10] = {11,12,13,14,15,16,17,18,19,20};
 	W25Qxx_WritePage(8, pageData);
-	W25Qxx_READ_MEMORY(READ_TYPE_PAGE, 9, 0,10, pageData);
+	W25Qxx_READ_MEMORY(READ_TYPE_PAGE, 8, 0,10, pageData);
 
 	EraseSector4KB(read_addr2); // Erase sector
 	// To read the entire 3rd sector (sector index = 2)-0x030000 to 0x03FFFF:
@@ -503,9 +503,10 @@ int main()
 
 	EraseSector4KB(read_addr3); // Erase sector
 	// To read the entire 2nd block (block index = 1)-0x010000 to 01FFFF:
-	uint8_t blockData[BLOCK_SIZE];
-	W25Qxx_BulkWrite(read_addr3, sectorData,sizeof(sectorData));
+	uint8_t blockData[BLOCK_SIZE]={0};
+	W25Qxx_BulkWrite(read_addr3, blockData,sizeof(blockData));
 	W25Qxx_READ_MEMORY(READ_TYPE_BLOCK, 1, 0, BLOCK_SIZE, blockData);
+
 
 	while (1)
 	{
