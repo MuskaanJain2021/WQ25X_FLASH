@@ -167,7 +167,11 @@ int W25Qxx_EnableFlash(void);
 int W25Qxx_WriteDisable(void);
 uint8_t W25Qxx_CheckStatusBit(uint8_t regCmd, uint8_t mask);
 uint8_t W25Qxx_ReadStatusReg(uint8_t regCmd);
+void EraseSector32KB(uint32_t start_Addr);
 void EraseSector4KB(uint32_t start_Addr);
+void EraseChip();
+void EraseSector64KB(uint32_t start_Addr);
+
 //void W25Q64FV_PowerDown(void);
 //void delay_5ms(void);
 
