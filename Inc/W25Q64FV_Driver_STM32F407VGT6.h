@@ -99,6 +99,9 @@
 
 
 #define read_addr1 0x000000
+#define read_addr2 0x030000
+#define read_addr3 0x010000
+
 
 typedef enum {
 	READ_TYPE_PAGE, READ_TYPE_SECTOR, READ_TYPE_BLOCK
