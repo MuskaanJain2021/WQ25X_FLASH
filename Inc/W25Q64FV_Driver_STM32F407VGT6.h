@@ -10,10 +10,10 @@
 //#include <SPI.h>
 #include <stdio.h>
 #include <stm32f4xx.h>
-#define FLASH_PAGE_SIZE  256
-#define SECTOR_SIZE   4096 //4KB
-#define BLOCK_SIZE    65536 //64KB
-#define FLASH_TOTAL_BYTES  (8 * 1024 * 1024)//8MB OR 64M BITS
+#define FLASH_PAGE_SIZE  256u
+#define SECTOR_SIZE   4096u //4KB
+#define BLOCK_SIZE    65536u //64KB
+#define FLASH_TOTAL_BYTES  (8u * 1024u * 1024u)//8MB OR 64M BITS
 
 #define JEDECID    0x9F
 
@@ -58,14 +58,14 @@
  * Bit 0 (BUSY): Busy Flag.
  *   - Indicates whether the device is currently busy with a program or erase operation.
  */
-#define SR_BUSY_MASK    0x01   // Bit 0
-#define SR_WEL_MASK     0x02   // Bit 1
-#define SR_BP0_MASK     0x04   // Bit 2
-#define SR_BP1_MASK     0x08   // Bit 3
-#define SR_BP2_MASK     0x10   // Bit 4
-#define SR_TB_MASK      0x20   // Bit 5
-#define SR_SEC_MASK     0x40   // Bit 6
-#define SR_SRP0_MASK    0x80   // Bit 7
+#define SR_BUSY_MASK    0x01u   // Bit 0
+#define SR_WEL_MASK     0x02u   // Bit 1
+#define SR_BP0_MASK     0x04u   // Bit 2
+#define SR_BP1_MASK     0x08u   // Bit 3
+#define SR_BP2_MASK     0x10u   // Bit 4
+#define SR_TB_MASK      0x20u   // Bit 5
+#define SR_SEC_MASK     0x40u   // Bit 6
+#define SR_SRP0_MASK    0x80u   // Bit 7
 
 
 /*
@@ -88,19 +88,19 @@
  * Bit 0 (SRP1): Status Register Protection bit 1.
  *   - Works in conjunction with SRP0 (from SR1) to protect the status registers.
  */
-#define SR2_SUS_MASK    0x80   // Bit 7
-#define SR2_CMP_MASK    0x40   // Bit 6
-#define SR2_LB3_MASK    0x20   // Bit 5
-#define SR2_LB2_MASK    0x10   // Bit 4
-#define SR2_LB1_MASK    0x08   // Bit 3
+#define SR2_SUS_MASK    0x80u   // Bit 7
+#define SR2_CMP_MASK    0x40u   // Bit 6
+#define SR2_LB3_MASK    0x20u   // Bit 5
+#define SR2_LB2_MASK    0x10u   // Bit 4
+#define SR2_LB1_MASK    0x08u  // Bit 3
 // Bit 2 is reserved.
-#define SR2_QE_MASK     0x02   // Bit 1
-#define SR2_SRP1_MASK   0x01   // Bit 0
+#define SR2_QE_MASK     0x02u  // Bit 1
+#define SR2_SRP1_MASK   0x01u   // Bit 0
 
 
-#define read_addr1 0x000000
-#define read_addr2 0x030000
-#define read_addr3 0x010000
+#define read_addr1 0x000000u
+#define read_addr2 0x030000u
+#define read_addr3 0x010000u
 
 
 typedef enum {
@@ -132,7 +132,6 @@ typedef enum {
         while(1); \
     } while(0)
 
-
 //typedef struct W25Qx_typedef
 //{
 //	SPI_TypeDef *SPI_Port;
@@ -161,7 +160,7 @@ void W25Qxx_CS_Pin_Init();
 uint32_t W25Qxx_READID(void);
 void W25Qxx_READ_DATA(uint32_t START_PAGE, uint8_t Offset,uint32_t NO_OF_BYTES_TO_BE_READ, uint8_t *DATA_BUFFER);
 void W25Qxx_READ_MEMORY(ReadType type, uint32_t index, uint8_t offset,uint32_t bytes, uint8_t *buffer);
-void W25Qxx_WritePage(uint32_t pageIndex, const uint8_t *data);
+FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex,uint16_t offset, const uint8_t *data,uint32_t len);
 void W25Qxx_Reset();
 int W25Qxx_EnableFlash(void);
 int W25Qxx_WriteDisable(void);
@@ -171,12 +170,15 @@ void EraseSector32KB(uint32_t start_Addr);
 void EraseSector4KB(uint32_t start_Addr);
 void EraseChip();
 void EraseSector64KB(uint32_t start_Addr);
-
 //void W25Q64FV_PowerDown(void);
 //void delay_5ms(void);
+//static inline int only_1_to_0(uint8_t current, uint8_t target);
+static inline int only_1_to_0(uint8_t current, uint8_t target) {
+	return ((target & (uint8_t)~current) == 0);
+}
 
-
-void W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data, uint32_t length);
+static  FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* src , uint32_t Bytes_To_be_written);
+FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data, uint32_t length);
 //uint8_t w25q64_read_id(SPI_Handle_t *spi);
 
 #endif /* W25Q64FV_DRIVER_STM32F407VGT6_H_ */
