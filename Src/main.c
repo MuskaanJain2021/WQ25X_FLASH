@@ -386,7 +386,7 @@ FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex, uint16_t offset,
 	//3) Enable Write first WEL bit
 	if (!W25Qxx_EnableFlash()) {
 		HANDLE_SPI_TIMEOUT("WEL not set before WritePage");
-		return;
+		return FLASH_ERR_TIMEOUT;
 	}
 	// 4) Issue Page Program (0x02) + 24-bit address + payload
 
@@ -409,14 +409,48 @@ FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex, uint16_t offset,
 	return FLASH_OK;
 }
 
-static inline int only_1_to_0(uint8_t current, uint8_t target) {
-	return ((target & (uint8_t) ~current) == 0);
+//Program the bytes that differ (current !=target)
+static  FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* src , uint32_t Bytes_To_be_written)
+{
+   while(Bytes_To_be_written)
+   {
+	   uint16_t offset = base/FLASH_PAGE_SIZE;
+	   uint16_t Scope_Bytes_Left =  FLASH_PAGE_SIZE - offset;
+	   uint16_t WriteSize = (Bytes_To_be_written < Scope_Bytes_Left)? Bytes_To_be_written : Scope_Bytes_Left;
+
+	   FlashStatus_t st = W25Qxx_WritePageInRange(base/FLASH_PAGE_SIZE,offset,src,WriteSize);
+	   if (st != FLASH_OK)return st;
+	   base += WriteSize; src+=WriteSize;Bytes_To_be_written-=WriteSize;
+
+   }
+   return FLASH_OK;
 }
 
-static program_Page_From_Posx_PosY(const)
+//Page Program  must run till it completes page boundary then move to  the next page automatically to write rest bytes
+static FlashStatus_t Programming_Bytes_Differing(const uint8_t *curr, const uint8_t *target,uint32_t base ,uint8_t Bytes_To_be_written)
+{
+	uint32_t idx = 0;
+	while(idx <  Bytes_To_be_written){
 
-FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
-		uint32_t length) {
+
+		//if Same Bytes
+		while ( idx < Bytes_To_be_written  && curr[idx] == target[idx])idx++;
+		if(idx == Bytes_To_be_written)break;
+
+
+		//Store count of differing bytes
+		 uint32_t  cnt = idx;
+		 while ( idx < Bytes_To_be_written && curr[idx] != target[idx])idx++;
+
+		 FlashStatus_t st = program_Page_From_Posx_PosY(base + cnt ,&target[cnt],idx - cnt);
+	     if (st != FLASH_OK)return st;
+	}
+	return FLASH_OK;
+}
+
+
+FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,uint32_t length)
+{
 	if (data == NULL || length == 0)
 		return FLASH_OK;
 	//Check boundary
@@ -431,7 +465,7 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
 	static uint8_t sector_buf[SECTOR_SIZE];  //To avoid on stack used static
 
 	//To track last erased sector index to avoid duplicate erases
-	int32_t last_erased_sector = -1;
+	//int32_t last_erased_sector = -1;
 
 	while (addr < end) {
 		uint32_t sector_base = (addr / SECTOR_SIZE) * SECTOR_SIZE;
@@ -450,7 +484,7 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
 		// 2) Decide erase
 		int need_erase = 0;
 		for (uint32_t idx = 0; idx < chunk_len; ++idx) {
-			if (!only_1_to_0(sector_buf[off_in_sec + idx]), data[idx]) {
+			if (!only_1_to_0(sector_buf[off_in_sec + idx], data[idx])) {
 				need_erase = 1;
 				break;
 			}
@@ -460,19 +494,19 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
 		FlashStatus_t st = FLASH_OK;
 		if (!need_erase) {
 			//No erase write page program caution is page bytes boundary checks
-			st = program_Page_From_Posx_PosY(&sector_buf[off_in_sec], data,addr, chunk_len);
+			st = Programming_Bytes_Differing(&sector_buf[off_in_sec], data,addr, chunk_len);
 			if (st != FLASH_OK)
 				return st;
 		} else {
 			//Erase:Erase once,Program only non FF ,merge
 			for (uint32_t idx = 0; idx < chunk_len; ++idx)
-				sector_buf[off_in_sec] = data[i];
+				sector_buf[off_in_sec + idx] = data[idx];
 
 			EraseSector4KB(sector_base);
 			if (!TIMEOUT_LOOP(W25Qxx_CheckStatusBit(ReadSR1, SR_BUSY_MASK),
 					3000000))
 				return FLASH_ERR_TIMEOUT;
-
+		// scan: does this page have any non-FF byte?
 			for (uint32_t p = 0; p < SECTOR_SIZE; p += FLASH_PAGE_SIZE) {
 				const uint8_t *page = &sector_buf[p];
 				int any_FFs = 0;
@@ -481,12 +515,13 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
 						any_FFs = 1;
 						break;
 					}
+				}
 					if (!any_FFs)
 						continue;
 
 
 
-				}
+
 				//non FF's in a page
 				uint32_t i = 0;
 				while (i < FLASH_PAGE_SIZE)
@@ -497,7 +532,7 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
 					while (i < FLASH_PAGE_SIZE  && page[i] != 0xFF)i++;
 
 
-					st = W25Qxx_WritePageInRange((sector_base + i)/FLASH_PAGE_SIZE,(uint16_t) yes_Not_FF_Found, &page[yes_Not_FF_Found],(uint16_t)(i- yes_Not_FF_Found));
+					st = W25Qxx_WritePageInRange((sector_base + p)/FLASH_PAGE_SIZE,(uint16_t) yes_Not_FF_Found, &page[yes_Not_FF_Found],(uint16_t)(i- yes_Not_FF_Found));
                     if (st != FLASH_OK)return st;
 
 				}
@@ -511,104 +546,8 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
 	}
 	return FLASH_OK;
 }
-//void W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data, uint32_t length)
-//{
-//	if (data == NULL || length == 0)return;
-//
-//	//Check boundary
-//	if (((uint64_t)start_addr + (uint64_t)length  > FLASH_TOTAL_BYTES))
-//	{
-//		HANDLE_SPI_TIMEOUT("BulkWrite out of range");return;
-//	}
-//
-//
-//	uint32_t addr = start_addr;
-//	const uint32_t end = start_addr + length;
-//
-//
-//	//Track last erased 4KB sector index to avoid duplicate erases
-//	int32_t last_erased_sector = -1;
-//
-//
-//	while(addr < end)
-//	{
-//		const  uint32_t page_index = addr / FLASH_PAGE_SIZE;
-//		const  uint32_t page_offset = addr  % FLASH_PAGE_SIZE;
-//		const uint32_t  bytes_left_in_page  = FLASH_PAGE_SIZE - page_offset;
-//		const uint32_t  write_size =  end - addr;
-//		const uint32_t  Mem_Chunk = (write_size < bytes_left_in_page)? write_size : bytes_left_in_page ;
-//
-//
-//		//1) Erase sector
-//
-//
-//
-//
-//
-//
-//
-//	}
-//
-////
-////	uint32_t page_offset = start_addr % FLASH_PAGE_SIZE;
-////	uint32_t page_index = start_addr / FLASH_PAGE_SIZE;
-//
-//	while (length > 0)
-//	{
-//		uint32_t current_addr = page_index * FLASH_PAGE_SIZE;
-//		uint32_t bytes_left_in_page = FLASH_PAGE_SIZE - page_offset;
-//		uint32_t write_size = (length < bytes_left_in_page) ? length : bytes_left_in_page;
-//
-////		// Erase sector only at start of each 4KB
-////		if ((current_addr % SECTOR_SIZE) == 0)
-////		{
-////			EraseSector4KB(current_addr);
-////		}
-//
-//		// Create a temporary page buffer
-//		uint8_t temp_page[FLASH_PAGE_SIZE];
-//		for (uint32_t i = 0; i < FLASH_PAGE_SIZE; i++)
-//			temp_page[i] = 0xFF;
-//
-//		// Read-modify-write if it's a partial page
-//		if (page_offset > 0 || write_size < FLASH_PAGE_SIZE)
-//		{
-//			W25Qxx_READ_DATA(page_index, 0, FLASH_PAGE_SIZE, temp_page);
-//		}
-//
-//		// Insert the incoming data into the temp page
-//		for (uint32_t i = 0; i < write_size; i++)
-//		{
-//			temp_page[page_offset + i] = data[i];
-//		}
-//
-//		// Enable write and verify WEL bit before page program
-//		if (W25Qxx_EnableFlash()  != 1)
-//		{
-//			// Handle error if WEL not set (e.g., return or log)
-//			return;
-//		}
-//
-//		// Program the full page
-//		W25Qxx_WritePage(page_index, temp_page);
-//
-//		if (!TIMEOUT_LOOP(W25Qxx_CheckStatusBit(ReadSR1, SR_BUSY_MASK), 100000))
-//		{
-//			HANDLE_SPI_TIMEOUT("BUSY after page program");
-//		}
-//
-//		// Optional: disable write
-//		W25Qxx_WriteDisable();
-//
-//		// Advance pointers
-//		data += write_size;
-//		length -= write_size;
-//		page_index++;
-//		page_offset = 0;
-//	}
-//}
 
-static void LED_Init_PD13_PD14(void) {
+void LED_Init_PD13_PD14(void) {
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;  //Enable clock of GPIOD
 
 	GPIOD->MODER |= GPIO_MODER_MODER13_0 | GPIO_MODER_MODER14_0;    // Output
@@ -622,7 +561,8 @@ static void LED_Init_PD13_PD14(void) {
 
 }
 
-int main() {
+int main(void)
+{
 	//delay_init(16000000);
 	W25Qxx_CS_Pin_Init();
 	W25Qxx_CS_HIGH();
@@ -708,4 +648,6 @@ int main() {
 			i = 0;
 		}
 	}
+	//return 0;
+
 }
