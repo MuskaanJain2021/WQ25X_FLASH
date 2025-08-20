@@ -1,6 +1,7 @@
 #include <stm32f407xx.h>
 #include <W25Q64FV_Driver_STM32F407VGT6.h>
-#include <delay.h>
+#include "SYSTICK.h"
+//#include <delay.h>
 #include <string.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -9,14 +10,14 @@ int i = 0;
 uint32_t W25Qxx_ID;
 // #include <GPIO.h>
 
-void delay1(int de) {
-	while (de-- > 0) {
-		for (volatile uint32_t i = 0; i < 800000; i++) {
-			__asm volatile("nop");
-		} // clk runs at (fclk/2 as set on sclk)8MHz ie 1.25us  if we do 1.25 x800000 =0.75 sec
-
-	}
-}
+//void delay1(int de) {
+//	while (de-- > 0) {
+//		for (uint32_t i = 0; i < 800000; i++);
+//		 // clk runs at (fclk/2 as set on sclk)8MHz ie 1.25us  if we do 1.25 x800000 =0.75 sec
+//
+//
+//}
+//}
 
 void W25Qxx_CS_LOW() {
 	GPIOD->BSRR = GPIO_BSRR_BR12;
@@ -26,11 +27,11 @@ void W25Qxx_CS_HIGH() {
 	GPIOD->BSRR = GPIO_BSRR_BS12;
 }
 
-static void LED_PASS(void) {
+void LED_PASS(void) {
 	GPIOD->BSRR = GPIO_BSRR_BS13;
 	GPIOD->BSRR = GPIO_BSRR_BR14;
 }
-static void LED_FAIL(void) {
+void LED_FAIL(void) {
 	GPIOD->BSRR = GPIO_BSRR_BS14;
 	GPIOD->BSRR = GPIO_BSRR_BR13;
 }
@@ -103,7 +104,7 @@ void spi1_init() {
 	SPI1->CR1 |= SPI_CR1_MSTR;
 	/*Set clock to FPCLK/2*/
 	SPI1->CR1 &= ~(SPI_CR1_BR);
-	SPI1->CR1 |= SPI_CR1_BR_1 | SPI_CR1_BR_0;
+	//SPI1->CR1 |= SPI_CR1_BR_1 | SPI_CR1_BR_0;
 	/*Set CPOL =0 AND CPHA = 0 (MODE0)*/
 	SPI1->CR1 &= ~SPI_CR1_CPOL;
 	SPI1->CR1 &= ~SPI_CR1_CPHA;
@@ -118,50 +119,66 @@ void spi1_init() {
 	SPI1->CR1 |= SPI_CR1_SPE;
 }
 
+//Full-duplex : send one byte, get one byte back.
+ uint8_t SPI1_TxRx(uint8_t tx)
+{
+    // Wait TXE
+    if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_TXE), 10000))
+        HANDLE_SPI_TIMEOUT("TXE not set");
+
+    // 8-bit write to DR
+    *(uint8_t*)&SPI1->DR = tx;
+
+    // Wait RXNE
+    if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_RXNE), 10000))
+        HANDLE_SPI_TIMEOUT("RXNE not set");
+
+    // 8-bit read clears RXNE (prevents OVR)
+    return *(uint8_t*)&SPI1->DR;
+}
+
+// "Write one byte" API: send and discard the returned byte.
 void SPI1_MASTER_TRANSFER_BYTE(uint8_t data) {
-	SPI1->DR = data; // on writing data to data register, txe bit is cleared
-	if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_TXE), 10000)) //// when txe bit is set means data is shifted out from "out" pin
-			{
-		HANDLE_SPI_TIMEOUT("TXE not set");
-	}
 
-	if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000)) {
-		HANDLE_SPI_TIMEOUT("BSY not cleared after TX"); // wait for busy flag to reset
-	}
+	(void)SPI1_TxRx(data);
 
 }
 
+// If you prefer to wait explicitly elsewhere
+int SPI1_WaitDone(void)
+{
+    if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000))
+        HANDLE_SPI_TIMEOUT("BSY not cleared");
+}
+
+//"Write buffer" API: stream bytes (discarding RX), and wait BSY once
 void SPI1_MASTER_TRANSFER_BUFFER(const uint8_t *data, uint8_t size) {
-	while (size > 0) {
-		uint8_t TX_DATA = *data;
-		SPI1_MASTER_TRANSFER_BYTE(TX_DATA);
-		size--;
-		data++;
+	while (size--) {
+		(void)SPI1_TxRx(*data++);
 	}
-	/*Clear OVR flag*/
-	(void) SPI1->DR;
-	(void) SPI1->SR;
+
+	if(!TIMEOUT_LOOP((SPI1->SR && SPI_SR_BSY),10000))
+	{
+		HANDLE_SPI_TIMEOUT("BUSY not cleared");
+	}
 }
 
+
+// Receive exactly one byte (clocks with 0xFF).
 uint8_t SPI1_MASTER_RECEIVE_BYTE() {
-	uint8_t receive_byte = 0;
-	SPI1->DR = 0xFF;
-	if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000)) {
-		HANDLE_SPI_TIMEOUT("BSY in RX");
-	}
-
-	if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_RXNE), 10000)) {
-		receive_byte = SPI1->DR;
-		HANDLE_SPI_TIMEOUT("RXNE not set");
-	}
-	return receive_byte;
+	return SPI1_TxRx(0xFF);
 }
 
+
+
+//Receive N bytes (clocks with 0xFF for each byte).
 void SPI1_MASTER_RECIEVE_BUFFER(uint8_t *data, uint32_t size) {
-	while (size > 0) {
-		*data++ = SPI1_MASTER_RECEIVE_BYTE();
-		size--;
-	}
+	if (!data || !size)return;
+	while (size--) {*data++ = SPI1_TxRx(0xFF);}
+
+    // End-of-frame fence: wait once before CS high
+    if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000))
+        HANDLE_SPI_TIMEOUT("BSY not cleared");
 }
 
 int W25Qxx_WriteDisable(void) {
@@ -171,7 +188,7 @@ int W25Qxx_WriteDisable(void) {
 	SPI1_MASTER_TRANSFER_BYTE(0x04); // 0x04 is the Write Disable command
 	W25Qxx_CS_HIGH();
 
-	delay1(500);
+	//delay1(500);
 	// Wait until the Write Enable Latch is cleared.
 	// Using generic status check function, check SR1 for the WEL bit.
 	if (W25Qxx_CheckStatusBit(ReadSR1, SR_WEL_MASK)) {
@@ -376,8 +393,7 @@ FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex, uint16_t offset,
 
 	//1)Check Page boundary of 256 bytes only(0-255) in a page
 
-	if (offset >= FLASH_PAGE_SIZE
-			|| len == 0|| ((uint32_t)offset +(uint32_t) len ) > FLASH_PAGE_SIZE)
+	if (offset >= FLASH_PAGE_SIZE|| len == 0|| ((uint32_t)offset +(uint32_t) len ) > FLASH_PAGE_SIZE)
 		return FLASH_ERR_INVALID_ADDR;
 
 	// 2) Compute 24-bit byte address
@@ -410,7 +426,7 @@ FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex, uint16_t offset,
 }
 
 //Program the bytes that differ (current !=target)
-static  FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* src , uint32_t Bytes_To_be_written)
+FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* src , uint32_t Bytes_To_be_written)
 {
    while(Bytes_To_be_written)
    {
@@ -427,7 +443,7 @@ static  FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* s
 }
 
 //Page Program  must run till it completes page boundary then move to  the next page automatically to write rest bytes
-static FlashStatus_t Programming_Bytes_Differing(const uint8_t *curr, const uint8_t *target,uint32_t base ,uint8_t Bytes_To_be_written)
+FlashStatus_t Programming_Bytes_Differing(const uint8_t *curr, const uint8_t *target,uint32_t base ,uint8_t Bytes_To_be_written)
 {
 	uint32_t idx = 0;
 	while(idx <  Bytes_To_be_written){
@@ -565,7 +581,7 @@ int main(void)
 {
 	//delay_init(16000000);
 	W25Qxx_CS_Pin_Init();
-	W25Qxx_CS_HIGH();
+	//W25Qxx_CS_HIGH();
 	// delay1(1);
 	// delay1(1);
 	spi1_init();
@@ -573,7 +589,8 @@ int main(void)
 	// delay(1);
 
 	W25Qxx_Reset();
-	delay1(10);
+	delay_ms(5);
+	//delay1(2);
 	// delay1(1);
 	// delay(1);
 	/*Power release*/
@@ -617,12 +634,13 @@ int main(void)
 	//-------------------------------------------
 
 	EraseSector4KB(read_addr1); // Erase sector
-
+	delay_ms(1000);
 	//To read 10 bytes from the 9th page:
 	uint8_t pageDataSrc[10] = { 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
 	uint8_t pageDatadest[10];
 	int len = 10;
 	W25Qxx_WritePageInRange(8u, 0, pageDataSrc, len);
+
 	W25Qxx_READ_MEMORY(READ_TYPE_PAGE, 8u, 0, len, pageDatadest);
 	if (memcmp(pageDataSrc, pageDatadest, len) == 0)
 		//Turn on green led else turn on red led
@@ -642,12 +660,13 @@ int main(void)
 //	W25Qxx_BulkWrite(read_addr3, blockData,sizeof(blockData));
 //	W25Qxx_READ_MEMORY(READ_TYPE_BLOCK, 1, 0, BLOCK_SIZE, blockData);
 
-	while (1) {
-		i++;
-		if (i > 250) {
-			i = 0;
-		}
-	}
+	while(1){}
+//	while (1) {
+//		i++;
+//		if (i > 250) {
+//			i = 0;
+//		}
+	//}
 	//return 0;
 
 }
