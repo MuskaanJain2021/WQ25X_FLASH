@@ -2,7 +2,7 @@
  * W25Q64FV_Driver_STM32F407VGT6.h
  *
  *  Created on: Feb 2, 2025
- *      Author: muska
+ *      Author: muskaan jain
  */
 
 #ifndef W25Q64FV_DRIVER_STM32F407VGT6_H_
@@ -113,7 +113,8 @@ typedef enum {
     FLASH_ERR_TIMEOUT,
     FLASH_ERR_WRITE,
     FLASH_ERR_INVALID_ADDR,
-    FLASH_ERR_COMM
+    FLASH_ERR_COMM,
+	FLASH_ERR_ALIGNMENT
 } FlashStatus_t;
 
 
@@ -131,6 +132,12 @@ typedef enum {
         SPI1->CR1 |= SPI_CR1_SPE; \
         while(1); \
     } while(0)
+
+
+
+static inline int only_1_to_0(uint8_t current, uint8_t target) {
+	return ((target & (uint8_t)~current) == 0);
+}
 
 //typedef struct W25Qx_typedef
 //{
@@ -162,22 +169,18 @@ void W25Qxx_READ_DATA(uint32_t START_PAGE, uint8_t Offset,uint32_t NO_OF_BYTES_T
 void W25Qxx_READ_MEMORY(ReadType type, uint32_t index, uint8_t offset,uint32_t bytes, uint8_t *buffer);
 FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex,uint16_t offset, const uint8_t *data,uint32_t len);
 void W25Qxx_Reset();
-int W25Qxx_EnableFlash(void);
-int W25Qxx_WriteDisable(void);
+FlashStatus_t W25Qxx_EnableFlash(void);
+FlashStatus_t W25Qxx_WriteDisable(void);
 uint8_t W25Qxx_CheckStatusBit(uint8_t regCmd, uint8_t mask);
 uint8_t W25Qxx_ReadStatusReg(uint8_t regCmd);
-void EraseSector32KB(uint32_t start_Addr);
-void EraseSector4KB(uint32_t start_Addr);
-void EraseChip();
-void EraseSector64KB(uint32_t start_Addr);
+FlashStatus_t EraseSector32KB(uint32_t start_Addr);
+FlashStatus_t EraseSector4KB(uint32_t start_Addr);
+FlashStatus_t EraseChip();
+FlashStatus_t EraseSector64KB(uint32_t start_Addr);
 //void W25Q64FV_PowerDown(void);
 //void delay_5ms(void);
-//static inline int only_1_to_0(uint8_t current, uint8_t target);
-static inline int only_1_to_0(uint8_t current, uint8_t target) {
-	return ((target & (uint8_t)~current) == 0);
-}
-
-static  FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* src , uint32_t Bytes_To_be_written);
+FlashStatus_t Programming_Bytes_Differing(const uint8_t *curr, const uint8_t *target,uint32_t base ,uint8_t Bytes_To_be_written);
+FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* src , uint32_t Bytes_To_be_written);
 FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data, uint32_t length);
 //uint8_t w25q64_read_id(SPI_Handle_t *spi);
 
