@@ -119,87 +119,73 @@ void spi1_init() {
 	SPI1->CR1 |= SPI_CR1_SPE;
 }
 
+static FlashStatus_t W25Qxx_WaitBusyClear(uint32_t ticks) {
+	// Wait while BUSY=1; return TIMEOUT if still busy when ticks expire
+	while ((W25Qxx_ReadStatusReg(ReadSR1) & SR_BUSY_MASK) && ticks--)
+		;
+	return (W25Qxx_ReadStatusReg(ReadSR1) & SR_BUSY_MASK) ?
+			FLASH_ERR_TIMEOUT : FLASH_OK;
+
+}
 //Full-duplex : send one byte, get one byte back.
- uint8_t SPI1_TxRx(uint8_t tx)
-{
-    // Wait TXE
-    if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_TXE), 10000))
-        HANDLE_SPI_TIMEOUT("TXE not set");
+uint8_t SPI1_TxRx(uint8_t tx) {
+	// Wait TXE
+	if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_TXE), 10000))
+		HANDLE_SPI_TIMEOUT("TXE not set");
 
-    // 8-bit write to DR
-    *(uint8_t*)&SPI1->DR = tx;
+	// 8-bit write to DR
+	*(uint8_t*) &SPI1->DR = tx;
 
-    // Wait RXNE
-    if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_RXNE), 10000))
-        HANDLE_SPI_TIMEOUT("RXNE not set");
+	// Wait RXNE
+	if (!TIMEOUT_LOOP(!(SPI1->SR & SPI_SR_RXNE), 10000))
+		HANDLE_SPI_TIMEOUT("RXNE not set");
 
-    // 8-bit read clears RXNE (prevents OVR)
-    return *(uint8_t*)&SPI1->DR;
+	// 8-bit read clears RXNE (prevents OVR)
+	return *(uint8_t*) &SPI1->DR;
 }
 
 // "Write one byte" API: send and discard the returned byte.
 void SPI1_MASTER_TRANSFER_BYTE(uint8_t data) {
 
-	(void)SPI1_TxRx(data);
+	(void) SPI1_TxRx(data);
 
 }
 
-// If you prefer to wait explicitly elsewhere
-int SPI1_WaitDone(void)
-{
-    if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000))
-        HANDLE_SPI_TIMEOUT("BSY not cleared");
-}
+//// If you prefer to wait explicitly elsewhere
+//int SPI1_WaitDone(void)
+//{
+//    if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000))
+//        HANDLE_SPI_TIMEOUT("BSY not cleared");
+//}
 
 //"Write buffer" API: stream bytes (discarding RX), and wait BSY once
 void SPI1_MASTER_TRANSFER_BUFFER(const uint8_t *data, uint8_t size) {
 	while (size--) {
-		(void)SPI1_TxRx(*data++);
+		(void) SPI1_TxRx(*data++);
 	}
 
-	if(!TIMEOUT_LOOP((SPI1->SR && SPI_SR_BSY),10000))
-	{
+	if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000)) {
 		HANDLE_SPI_TIMEOUT("BUSY not cleared");
 	}
 }
-
 
 // Receive exactly one byte (clocks with 0xFF).
 uint8_t SPI1_MASTER_RECEIVE_BYTE() {
 	return SPI1_TxRx(0xFF);
 }
 
-
-
 //Receive N bytes (clocks with 0xFF for each byte).
 void SPI1_MASTER_RECIEVE_BUFFER(uint8_t *data, uint32_t size) {
-	if (!data || !size)return;
-	while (size--) {*data++ = SPI1_TxRx(0xFF);}
-
-    // End-of-frame fence: wait once before CS high
-    if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000))
-        HANDLE_SPI_TIMEOUT("BSY not cleared");
-}
-
-int W25Qxx_WriteDisable(void) {
-	int RetVal;
-	// Assert CS and send Write Disable command (0x04)
-	W25Qxx_CS_LOW();
-	SPI1_MASTER_TRANSFER_BYTE(0x04); // 0x04 is the Write Disable command
-	W25Qxx_CS_HIGH();
-
-	//delay1(500);
-	// Wait until the Write Enable Latch is cleared.
-	// Using generic status check function, check SR1 for the WEL bit.
-	if (W25Qxx_CheckStatusBit(ReadSR1, SR_WEL_MASK)) {
-		RetVal = -1; // If WEL is still set, return an error code.
-	} else {
-		RetVal = 1; // Write disable successful
+	if (!data || !size)
+		return;
+	while (size--) {
+		*data++ = SPI1_TxRx(0xFF);
 	}
 
-	return RetVal;
+	// End-of-frame fence: wait once before CS high
+	if (!TIMEOUT_LOOP((SPI1->SR & SPI_SR_BSY), 10000))
+		HANDLE_SPI_TIMEOUT("BSY not cleared");
 }
-
 uint8_t W25Qxx_ReadStatusReg(uint8_t regCmd) {
 	uint8_t status;
 	W25Qxx_CS_LOW();
@@ -216,6 +202,23 @@ uint8_t W25Qxx_CheckStatusBit(uint8_t regCmd, uint8_t mask) {
 	return (status & mask);
 }
 
+FlashStatus_t W25Qxx_WriteDisable(void) {
+	FlashStatus_t st = W25Qxx_WaitBusyClear(500000);
+	if (st != FLASH_OK)
+		return st;
+
+	W25Qxx_CS_LOW();
+	SPI1_MASTER_TRANSFER_BYTE(0x04);
+	W25Qxx_CS_HIGH();
+
+	uint32_t t = 5000;
+	while ((W25Qxx_ReadStatusReg(ReadSR1) & SR_WEL_MASK) && t--)
+		;
+	// Verify WEL cleared (optional but safer)
+	return (W25Qxx_ReadStatusReg(ReadSR1) & SR_WEL_MASK) ?
+			FLASH_ERR_WRITE : FLASH_OK;
+}
+
 uint32_t W25Qxx_READID(void) {
 	uint8_t d[4];
 	W25Qxx_CS_LOW();
@@ -228,6 +231,7 @@ uint32_t W25Qxx_READID(void) {
 	W25Qxx_CS_HIGH();
 	return (d[0] << 16) | (d[1] << 8) | d[2];
 }
+
 void W25Qxx_READ_DATA(uint32_t START_PAGE, uint8_t Offset,
 		uint32_t NO_OF_BYTES_TO_BE_READ, uint8_t *DATA_BUFFER) {
 
@@ -298,6 +302,7 @@ void W25Qxx_READ_MEMORY(ReadType type, uint32_t index, uint8_t offset,
 	// Call the low-level read function using the computed start page, offset, and length.
 	W25Qxx_READ_DATA(StartPage, offset, length, buffer);
 }
+
 void W25Qxx_Reset() {
 	W25Qxx_CS_LOW();
 	SPI1_MASTER_TRANSFER_BYTE(0x66);
@@ -305,21 +310,38 @@ void W25Qxx_Reset() {
 	// delay(1);
 	W25Qxx_CS_HIGH();
 }
-int W25Qxx_EnableFlash(void) {
-	int RetVal;
+
+FlashStatus_t W25Qxx_EnableFlash(void) {
+	//During any operation wel set is not allowed
+	FlashStatus_t st = W25Qxx_WaitBusyClear(50000U);
+	if (st != FLASH_OK)
+		return FLASH_ERR_TIMEOUT;
+
+	//issue write enable command (0x06)
 	W25Qxx_CS_LOW();
 	SPI1_MASTER_TRANSFER_BYTE(WriteEnable);
 	W25Qxx_CS_HIGH();
-	if (W25Qxx_CheckStatusBit(ReadSR1, SR_WEL_MASK))
-		RetVal = 1;
-	else
-		RetVal = -1;
 
-	return RetVal;
+	//uint32_t ticks = 2000;
+
+//	while ((W25Qxx_ReadStatusReg(ReadSR1) & SR_BUSY_MASK) && ticks--)
+	;
+	// Read SR1 and confirm WEL
+	uint8_t sr1 = W25Qxx_ReadStatusReg(ReadSR1);
+	return (sr1 & SR_WEL_MASK) ? FLASH_OK : FLASH_ERR_WRITE;
 }
 
-void EraseSector4KB(uint32_t start_Addr) {
-	W25Qxx_EnableFlash(); // WEL INSTRUCTION
+FlashStatus_t EraseSector4KB(uint32_t start_Addr) {
+// Rule : byte address, must be sector-aligned
+	if (addr >= FLASH_TOTAL_BYTES)
+		return FLASH_ERR_INVALID_ADDR;
+	if ((addr % SECTOR_SIZE) != 0)
+		return FLASH_ERR_ALIGNMENT;
+
+	FlashStatus_t st = W25Qxx_WriteEnable();
+	if (st != FLASH_OK)
+		return st;
+
 	W25Qxx_CS_LOW();
 	SPI1_MASTER_TRANSFER_BYTE(Sector_Erase4KB);
 	SPI1_MASTER_TRANSFER_BYTE((start_Addr >> 16) & 0xFF);
@@ -335,7 +357,10 @@ void EraseSector4KB(uint32_t start_Addr) {
 	// WEL Bit gets cleared in status register 1 that is device entered into write disable state
 	// Sector erase won't occur if block protection bits in status register memory protection is enabled
 	//  explicitly disable writes after erase.
-	W25Qxx_WriteDisable();
+	st = W25Qxx_WriteDisable();
+	if (st != FLASH_OK)
+		return st;
+	return FLASH_OK;
 	// Why Write disable explicitly needs to be called
 	// guarantee that the flash is write-protected and no unintended write occurs.
 	// Prevents any accidental writes that might occur if the Write Enable Latch remains set.
@@ -343,8 +368,16 @@ void EraseSector4KB(uint32_t start_Addr) {
 	// Even if the device automatically clears WEL, explicitly issuing a Write Disable command can serve as an extra safeguard in your firmware design.
 }
 
-void EraseSector32KB(uint32_t start_Addr) {
-	W25Qxx_EnableFlash();  // Set WEL bit
+FlashStatus_t EraseSector32KB(uint32_t start_Addr) {
+	if (addr >= FLASH_TOTAL_BYTES)
+		return FLASH_ERR_INVALID_ADDR;
+	if ((addr % SECTOR_SIZE) != 0)
+		return FLASH_ERR_ALIGNMENT;
+
+	FlashStatus_t st = W25Qxx_WriteEnable();
+	if (st != FLASH_OK)
+		return st;
+
 	W25Qxx_CS_LOW();
 	SPI1_MASTER_TRANSFER_BYTE(Sector_Erase32KB);  // 0x52
 	SPI1_MASTER_TRANSFER_BYTE((start_Addr >> 16) & 0xFF);
@@ -356,11 +389,22 @@ void EraseSector32KB(uint32_t start_Addr) {
 		HANDLE_SPI_TIMEOUT("BUSY after 32KB sector erase");
 	}
 
-	W25Qxx_WriteDisable();  // Always disable write after erase
+	st = W25Qxx_WriteDisable();
+	if (st != FLASH_OK)
+		return st;
+	return FLASH_OK;
 }
 
-void EraseSector64KB(uint32_t start_Addr) {
-	W25Qxx_EnableFlash();  // Set WEL bit
+FlashStatus_t EraseSector64KB(uint32_t start_Addr) {
+	if (addr >= FLASH_TOTAL_BYTES)
+		return FLASH_ERR_INVALID_ADDR;
+	if ((addr % SECTOR_SIZE) != 0)
+		return FLASH_ERR_ALIGNMENT;
+
+	FlashStatus_t st = W25Qxx_WriteEnable();
+	if (st != FLASH_OK)
+		return st;
+
 	W25Qxx_CS_LOW();
 	SPI1_MASTER_TRANSFER_BYTE(Sector_Erase64KB);  // 0xD8
 	SPI1_MASTER_TRANSFER_BYTE((start_Addr >> 16) & 0xFF);
@@ -372,11 +416,18 @@ void EraseSector64KB(uint32_t start_Addr) {
 		HANDLE_SPI_TIMEOUT("BUSY after 64KB sector erase");
 	}
 
-	W25Qxx_WriteDisable();  // Protect against unintended writes
+	st = W25Qxx_WriteDisable();
+	if (st != FLASH_OK)
+		return st;
+	return FLASH_OK;
 }
 
-void EraseChip() {
-	W25Qxx_EnableFlash();  // Set WEL bit
+FlashStatus_t EraseChip() {
+
+	FlashStatus_t st = W25Qxx_WriteEnable();
+	if (st != FLASH_OK)
+		return st;
+
 	W25Qxx_CS_LOW();
 	SPI1_MASTER_TRANSFER_BYTE(Chip_Erase);  // 0xC7 or 0x60
 	W25Qxx_CS_HIGH();
@@ -385,7 +436,10 @@ void EraseChip() {
 		HANDLE_SPI_TIMEOUT("BUSY after chip erase");
 	}
 
-	W25Qxx_WriteDisable();
+	st = W25Qxx_WriteDisable();
+	if (st != FLASH_OK)
+		return st;
+	return FLASH_OK;
 }
 
 FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex, uint16_t offset,
@@ -393,17 +447,18 @@ FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex, uint16_t offset,
 
 	//1)Check Page boundary of 256 bytes only(0-255) in a page
 
-	if (offset >= FLASH_PAGE_SIZE|| len == 0|| ((uint32_t)offset +(uint32_t) len ) > FLASH_PAGE_SIZE)
+	if (offset >= FLASH_PAGE_SIZE
+			|| len == 0|| ((uint32_t)offset +(uint32_t) len ) > FLASH_PAGE_SIZE)
 		return FLASH_ERR_INVALID_ADDR;
 
 	// 2) Compute 24-bit byte address
 	uint32_t addr = pageIndex * FLASH_PAGE_SIZE + offset;
 
 	//3) Enable Write first WEL bit
-	if (!W25Qxx_EnableFlash()) {
-		HANDLE_SPI_TIMEOUT("WEL not set before WritePage");
-		return FLASH_ERR_TIMEOUT;
-	}
+	FlashStatus_t st = W25Qxx_EnableFlash();
+	if (st != FLASH_OK)
+		return st;
+
 	// 4) Issue Page Program (0x02) + 24-bit address + payload
 
 	W25Qxx_CS_LOW();
@@ -420,53 +475,61 @@ FlashStatus_t W25Qxx_WritePageInRange(uint32_t pageIndex, uint16_t offset,
 		HANDLE_SPI_TIMEOUT("WritePage BUSY Timeout");
 	}
 
-	// Optional safety: disable WEL
-	W25Qxx_WriteDisable();
-	return FLASH_OK;
+	FlashStatus_t st = W25Qxx_WriteDisable();
+	if (st != FLASH_OK)
+		return FLASH_OK;
 }
 
 //Program the bytes that differ (current !=target)
-FlashStatus_t program_Page_From_Posx_PosY(uint32_t base,const uint8_t* src , uint32_t Bytes_To_be_written)
-{
-   while(Bytes_To_be_written)
-   {
-	   uint16_t offset = base/FLASH_PAGE_SIZE;
-	   uint16_t Scope_Bytes_Left =  FLASH_PAGE_SIZE - offset;
-	   uint16_t WriteSize = (Bytes_To_be_written < Scope_Bytes_Left)? Bytes_To_be_written : Scope_Bytes_Left;
+FlashStatus_t program_Page_From_Posx_PosY(uint32_t base, const uint8_t *src,
+		uint32_t Bytes_To_be_written) {
+	while (Bytes_To_be_written) {
+		uint32_t page_index = base / FLASH_PAGE_SIZE;
+		uint16_t offset = base % FLASH_PAGE_SIZE;
+		uint16_t Scope_Bytes_Left = FLASH_PAGE_SIZE - offset;
+		uint16_t WriteSize =
+				(Bytes_To_be_written < Scope_Bytes_Left) ?
+						Bytes_To_be_written : Scope_Bytes_Left;
 
-	   FlashStatus_t st = W25Qxx_WritePageInRange(base/FLASH_PAGE_SIZE,offset,src,WriteSize);
-	   if (st != FLASH_OK)return st;
-	   base += WriteSize; src+=WriteSize;Bytes_To_be_written-=WriteSize;
+		FlashStatus_t st = W25Qxx_WritePageInRange(page_index, offset, src,
+				WriteSize);
+		if (st != FLASH_OK)
+			return st;
+		base += WriteSize;
+		src += WriteSize;
+		Bytes_To_be_written -= WriteSize;
 
-   }
-   return FLASH_OK;
-}
-
-//Page Program  must run till it completes page boundary then move to  the next page automatically to write rest bytes
-FlashStatus_t Programming_Bytes_Differing(const uint8_t *curr, const uint8_t *target,uint32_t base ,uint8_t Bytes_To_be_written)
-{
-	uint32_t idx = 0;
-	while(idx <  Bytes_To_be_written){
-
-
-		//if Same Bytes
-		while ( idx < Bytes_To_be_written  && curr[idx] == target[idx])idx++;
-		if(idx == Bytes_To_be_written)break;
-
-
-		//Store count of differing bytes
-		 uint32_t  cnt = idx;
-		 while ( idx < Bytes_To_be_written && curr[idx] != target[idx])idx++;
-
-		 FlashStatus_t st = program_Page_From_Posx_PosY(base + cnt ,&target[cnt],idx - cnt);
-	     if (st != FLASH_OK)return st;
 	}
 	return FLASH_OK;
 }
 
+//Page Program  must run till it completes page boundary then move to  the next page automatically to write rest bytes
+FlashStatus_t Programming_Bytes_Differing(const uint8_t *curr,
+		const uint8_t *target, uint32_t base, uint8_t Bytes_To_be_written) {
+	uint32_t idx = 0;
+	while (idx < Bytes_To_be_written) {
 
-FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,uint32_t length)
-{
+		//if Same Bytes
+		while (idx < Bytes_To_be_written && curr[idx] == target[idx])
+			idx++;
+		if (idx == Bytes_To_be_written)
+			break;
+
+		//Store count of differing bytes
+		uint32_t cnt = idx;
+		while (idx < Bytes_To_be_written && curr[idx] != target[idx])
+			idx++;
+
+		FlashStatus_t st = program_Page_From_Posx_PosY(base + cnt, &target[cnt],
+				idx - cnt);
+		if (st != FLASH_OK)
+			return st;
+	}
+	return FLASH_OK;
+}
+
+FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,
+		uint32_t length) {
 	if (data == NULL || length == 0)
 		return FLASH_OK;
 	//Check boundary
@@ -510,7 +573,8 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,uint32_t
 		FlashStatus_t st = FLASH_OK;
 		if (!need_erase) {
 			//No erase write page program caution is page bytes boundary checks
-			st = Programming_Bytes_Differing(&sector_buf[off_in_sec], data,addr, chunk_len);
+			st = Programming_Bytes_Differing(&sector_buf[off_in_sec], data,
+					addr, chunk_len);
 			if (st != FLASH_OK)
 				return st;
 		} else {
@@ -522,7 +586,7 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,uint32_t
 			if (!TIMEOUT_LOOP(W25Qxx_CheckStatusBit(ReadSR1, SR_BUSY_MASK),
 					3000000))
 				return FLASH_ERR_TIMEOUT;
-		// scan: does this page have any non-FF byte?
+			// scan: does this page have any non-FF byte?
 			for (uint32_t p = 0; p < SECTOR_SIZE; p += FLASH_PAGE_SIZE) {
 				const uint8_t *page = &sector_buf[p];
 				int any_FFs = 0;
@@ -532,27 +596,29 @@ FlashStatus_t W25Qxx_BulkWrite(uint32_t start_addr, const uint8_t *data,uint32_t
 						break;
 					}
 				}
-					if (!any_FFs)
-						continue;
-
-
-
+				if (!any_FFs)
+					continue;
 
 				//non FF's in a page
 				uint32_t i = 0;
-				while (i < FLASH_PAGE_SIZE)
-				{
-					while (i < FLASH_PAGE_SIZE  && page[i] == 0xFF)i++;
-					if (i == FLASH_PAGE_SIZE)break;
+				while (i < FLASH_PAGE_SIZE) {
+					while (i < FLASH_PAGE_SIZE && page[i] == 0xFF)
+						i++;
+					if (i == FLASH_PAGE_SIZE)
+						break;
 					uint32_t yes_Not_FF_Found = i;
-					while (i < FLASH_PAGE_SIZE  && page[i] != 0xFF)i++;
+					while (i < FLASH_PAGE_SIZE && page[i] != 0xFF)
+						i++;
 
-
-					st = W25Qxx_WritePageInRange((sector_base + p)/FLASH_PAGE_SIZE,(uint16_t) yes_Not_FF_Found, &page[yes_Not_FF_Found],(uint16_t)(i- yes_Not_FF_Found));
-                    if (st != FLASH_OK)return st;
+					st = W25Qxx_WritePageInRange(
+							(sector_base + p) / FLASH_PAGE_SIZE,
+							(uint16_t) yes_Not_FF_Found,
+							&page[yes_Not_FF_Found],
+							(uint16_t) (i - yes_Not_FF_Found));
+					if (st != FLASH_OK)
+						return st;
 
 				}
-
 
 			}
 		}
@@ -577,8 +643,7 @@ void LED_Init_PD13_PD14(void) {
 
 }
 
-int main(void)
-{
+int main(void) {
 	//delay_init(16000000);
 	W25Qxx_CS_Pin_Init();
 	//W25Qxx_CS_HIGH();
@@ -596,6 +661,7 @@ int main(void)
 	/*Power release*/
 
 	W25Qxx_ID = W25Qxx_READID();
+	delay_ms(10);
 	//	/*Slave Confirmation that I am alive to Master*/
 	//	/*INSTRUCTION CODE : 90h*/
 	//	SPI_MASTER_TRANSFER_BYTE(0x90);
@@ -660,7 +726,8 @@ int main(void)
 //	W25Qxx_BulkWrite(read_addr3, blockData,sizeof(blockData));
 //	W25Qxx_READ_MEMORY(READ_TYPE_BLOCK, 1, 0, BLOCK_SIZE, blockData);
 
-	while(1){}
+	while (1) {
+	}
 //	while (1) {
 //		i++;
 //		if (i > 250) {
