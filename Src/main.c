@@ -646,7 +646,7 @@ void LED_Init_PD13_PD14(void) {
 int main(void) {
 	//delay_init(16000000);
 	W25Qxx_CS_Pin_Init();
-	//W25Qxx_CS_HIGH();
+	W25Qxx_CS_HIGH();
 	// delay1(1);
 	// delay1(1);
 	spi1_init();
